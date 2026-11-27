@@ -3641,7 +3641,7 @@ function makeDeck(decks, jokers) {
         else { say(`${P[pi].name} 차례`); await W(380); }
         if (!ctx.alive()) return [1, 1];
         rolling = true;
-        for (let k = 0; k < 3; k++) { dice = [1 + rand(6), 1 + rand(6)]; render(); await W(90); }
+        if (ctx.online) { render(); await W(350); } else for (let k = 0; k < 3; k++) { dice = [1 + rand(6), 1 + rand(6)]; render(); await W(90); }
         rolling = false;
         dice = [1 + rand(6), 1 + rand(6)];
         render();
@@ -4451,6 +4451,7 @@ function makeDeck(decks, jokers) {
       });
       peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { /* ignore */ } });
       H.send = (id, data) => { const c = H.conns[id]; if (c && c.open) c.send(data); };
+      H.buffered = id => { const c = H.conns[id]; return c && c.dataChannel ? c.dataChannel.bufferedAmount : 0; };
       H.close = () => { try { peer.destroy(); } catch (e) { /* ignore */ } };
       return H;
     }
@@ -4670,6 +4671,23 @@ function makeDeck(decks, jokers) {
   }
   const fixMe = (txt, viewer, inSeat, names) => (inSeat < 0 || !names[inSeat] ? txt : viewer === inSeat ? txt.split(names[inSeat] + ' 차례입니다. 주사위').join('내 차례입니다. 주사위').split(names[inSeat] + ' 차례입니다').join('내 차례입니다') : txt.split('내 차례').join(names[inSeat] + ' 차례'));
 
+  /* ----- update the copied screen in place so animations do not restart ----- */
+  function morphNode(a, b) {
+    if (a.nodeType !== b.nodeType || (a.nodeType === 1 && a.tagName !== b.tagName)) { a.replaceWith(b.cloneNode(true)); return; }
+    if (a.nodeType === 3 || a.nodeType === 8) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
+    if (a.nodeType !== 1) return;
+    const aa = a.attributes, ba = b.attributes;
+    for (let i = aa.length - 1; i >= 0; i--) { const nm = aa[i].name; if (!b.hasAttribute(nm)) a.removeAttribute(nm); }
+    for (let i = 0; i < ba.length; i++) { const { name, value } = ba[i]; if (a.getAttribute(name) !== value) a.setAttribute(name, value); }
+    morphKids(a, b);
+  }
+  function morphKids(a, b) {
+    const ak = Array.from(a.childNodes), bk = Array.from(b.childNodes);
+    for (let i = 0; i < bk.length; i++) { if (i < ak.length) morphNode(ak[i], bk[i]); else a.appendChild(bk[i].cloneNode(true)); }
+    for (let i = ak.length - 1; i >= bk.length; i--) ak[i].remove();
+  }
+  function morphInto(el, html) { const tpl = document.createElement(el.tagName); tpl.innerHTML = html; morphKids(el, tpl); }
+
   /* ----- compression for big screen copies ----- */
   const CAN_Z = typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
   async function zip(str) { const s = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip')); return new Uint8Array(await new Response(s).arrayBuffer()); }
@@ -4886,7 +4904,7 @@ function makeDeck(decks, jokers) {
       const players = seats.map((s, i) => ({ idx: i, human: s.human, level: room.level, color: s.color, name: s.name }));
       const names = players.map(p => p.name);
       const logLines = [];
-      let midSeq = 0, lastSent = {}, sendQ = {}, extrasFor = null, cur = -1, lastCur = -1, extras = [], statusRaw = '', ended = false, timer = null, fixing = false;
+      let midSeq = 0, lastSent = {}, busy = {}, dirty = false, extrasFor = null, cur = -1, lastCur = -1, extras = [], statusRaw = '', ended = false, timer = null, fixing = false;
       const M = { log: m => ctx.log(m) };
       const inSeat = () => (ctx.inputSeat != null && ctx.inputSeat >= 0 ? ctx.inputSeat : cur);
       const mAlive = () => alive() && room.mirror === M && room.gen === gen;
@@ -4917,8 +4935,11 @@ function makeDeck(decks, jokers) {
           const hv = fixMe(html, i, who, names);
           const msg = { t: 'mirror', seats: seatData(i), me: i, status: fixMe(statusRaw, i, who, names), log: logLines.slice(-60), myInput: who === i, ended };
           if (lastSent[s.id] !== hv) { lastSent[s.id] = hv; msg.html = hv; }
-          sendQ[s.id] = (sendQ[s.id] || Promise.resolve()).then(() => sendPacked(H, s.id, msg)).catch(() => { });
+          if (busy[s.id] || (H.buffered && H.buffered(s.id) > 150000)) { dirty = true; if (msg.html != null) lastSent[s.id] = null; return; }
+          busy[s.id] = true;
+          sendPacked(H, s.id, msg).catch(() => { }).then(() => { busy[s.id] = false; });
         });
+        if (dirty) { dirty = false; setTimeout(schedule, 120); }
       }
       const schedule = () => { if (!timer) timer = setTimeout(flush, FAST ? 0 : 90); };
       const mo = new MutationObserver(() => { if (!fixing) schedule(); });
@@ -5027,7 +5048,7 @@ function makeDeck(decks, jokers) {
       else if (m.t === 'start') { joined = true; showTable(m.game, false); if (m.mode === 'mirror') setupGuestMirror(); }
       else if (m.t === 'mirror') {
         if (!tableEl || !document.body.contains(tableEl)) { showTable(info ? info.game : '', false); setupGuestMirror(); }
-        if (m.html != null) tableEl.innerHTML = m.html;
+        if (m.html != null) morphInto(tableEl, m.html);
         tableEl.classList.toggle('my-input', !!m.myInput);
         const row = tableEl.querySelector('.overlay .row');
         if (row) row.replaceWith(h('p', { class: 'on-wait' }, '방장이 다음 판을 고를 때까지 기다려 주세요.'));
