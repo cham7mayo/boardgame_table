@@ -551,6 +551,8 @@ h1,h2,h3,p{margin:0}
 .on-p.ai{opacity:.6;font-weight:400}
 .on-start{margin-top:10px}
 .on-root{width:100%;height:100%;position:relative}
+.pask-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.pask-list .mb-tr{display:block;width:100%;text-align:left;padding:10px 12px;white-space:normal}
 
 </style>
 </head>
@@ -740,7 +742,8 @@ function startGame(g, cfg) {
       logEl.scrollTop = logEl.scrollHeight;
     },
     status(msg) { statusEl.textContent = msg; },
-    setSeats(cur, extras) {
+    setSeats(cur, extras, extrasFor) {
+      if (extrasFor) extras = extrasFor(players.findIndex(p => p.human));
       seatsEl.replaceChildren(...players.map((p, i) => h('div', { class: 'seat' + (cur === i ? ' turn' : '') },
         h('span', { class: 'dot', style: { '--d': p.color } }),
         h('span', { class: 'nm' }, p.name), p.human && p.name !== '나' ? h('span', { class: 'me' }, '나') : null,
@@ -3056,8 +3059,9 @@ function makeDeck(decks, jokers) {
       function render() {
         for (let i = 0; i < 32; i++) updateSquare(i);
         diceEl.replaceChildren(...dice.map(v => dieEl(v, rolling ? 'rolling' : '')));
-        infoEl.textContent = over ? '' : `${round}${maxRounds ? '/' + maxRounds : ''}라운드 - ${P[cur].name}` + (S.olympic >= 0 ? ` / 올림픽 ${BOARD[S.olympic].n} x${S.olyMult}` : '');
-        ctx.setSeats(over ? -1 : cur, P.map((_, i) => (S.alive[i] ? S.cash[i] + '만 · ' + (S.laps[i] + 1) + '바퀴' + (S.angel[i] ? ' 천사' + S.angel[i] : '') + (S.escape[i] ? ' 탈출권' + S.escape[i] : '') + (TR && S.tr[i].length ? ' · ' + S.tr[i].map(id => TS[id].s + (S.grow[i][id] != null ? `(${Math.round(Math.min(1, 1 / 3 + S.grow[i][id]) * 100)}%)` : '')).join('·') : '') : '파산')));
+        infoEl.textContent = over ? '' : `${round}${maxRounds ? '/' + maxRounds : ''}라운드 - ${cur >= 0 ? P[cur].name : "보물 선택 중"}` + (S.olympic >= 0 ? ` / 올림픽 ${BOARD[S.olympic].n} x${S.olyMult}` : '');
+        const seatEx = viewer => P.map((_, i) => (S.alive[i] ? S.cash[i] + '만 · ' + (S.laps[i] + 1) + '바퀴' + (S.angel[i] ? ' 천사' + S.angel[i] : '') + (S.escape[i] ? ' 탈출권' + S.escape[i] : '') + (TR && S.tr[i].length ? (i === viewer || over ? ' · ' + S.tr[i].map(id => TS[id].s + (S.grow[i][id] != null ? `(${Math.round(Math.min(1, 1 / 3 + S.grow[i][id]) * 100)}%)` : '')).join('·') : ' · 보물 ' + S.tr[i].length + '개') : '') : '파산'));
+        ctx.setSeats(over ? -1 : cur, seatEx(P.findIndex(p => p.human)), seatEx);
       }
       const say = t => { msgEl.textContent = t; };
       const SPECIAL = {
@@ -3516,25 +3520,23 @@ function makeDeck(decks, jokers) {
         return false;
       }
       async function chooseTreasures() {
-        const PREF = ['core', 'goblin', 'royal', 'guide', 'magnet', 'redtag', 'craft', 'perfume', 'ticket', 'shield'];
-        for (let pi = 0; pi < n; pi++) {
+        const ask1 = (pi, r, offer) => {
+          const title = `보물 선택 (${r + 1}/2)`, text = '보물 하나를 고르세요. 선택지는 사람마다 다르고, 고른 보물은 다른 사람에게 보이지 않습니다.' + (S.tr[pi].length ? ` 이미 고른 보물: ${TS[S.tr[pi][0]].n}` : '');
+          if (ctx.privateAsk) return ctx.privateAsk(pi, title, text, offer.map(x => ({ v: x.id, l: x.n, d: x.d })));
+          return askPop(title, text, offer.map(x => ({ v: x.id, cls: 'btn mb-tr', l: h('span', null, h('b', null, x.n), h('small', null, x.d)) })));
+        };
+        cur = -1; say('모두 보물을 고르는 중입니다...'); render();
+        await Promise.all(P.map(async (_, pi) => {
           for (let r = 0; r < 2; r++) {
             const offer = shuffle(TREASURES.filter(x => !S.tr[pi].includes(x.id))).slice(0, 2);
-            let pickId;
-            if (P[pi].human) {
-              cur = pi; render();
-              pickId = await askPop(`보물 선택 (${r + 1}/2)`, '보물 하나를 고르세요. 상대들은 각자 다른 선택지를 받습니다.' + (S.tr[pi].length ? ` 이미 고른 보물: ${TS[S.tr[pi][0]].n}` : ''),
-                offer.map(x => ({ v: x.id, cls: 'btn mb-tr', l: h('span', null, h('b', null, x.n), h('small', null, x.d)) })));
-              if (!ctx.alive()) return;
-            } else {
-              pickId = offer[rand(offer.length)].id;
-            }
+            let pickId = P[pi].human ? await ask1(pi, r, offer) : offer[rand(offer.length)].id;
+            if (!offer.some(x => x.id === pickId)) pickId = offer[0].id;
             S.tr[pi].push(pickId);
           }
-          ctx.log(`${P[pi].name}: 보물 - ${S.tr[pi].map(id => TS[id].n).join(', ')}`);
-          render();
-        }
-        cur = 0; render();
+        }));
+        if (!ctx.alive()) return;
+        ctx.log('모두 보물을 골랐습니다. 다른 사람의 보물은 발동할 때 공개됩니다.');
+        say(''); cur = 0; render();
       }
 
       /* ---- landing ---- */
@@ -4666,7 +4668,26 @@ function makeDeck(decks, jokers) {
     return h('div', { class: 'seat' + (s.turn ? ' turn' : '') }, h('span', { class: 'dot', style: { '--d': s.color } }), h('span', { class: 'nm' }, s.name),
       i === mine ? h('span', { class: 'me' }, '나') : s.ai ? h('span', { class: 'me' }, 'AI') : null, h('span', { class: 'ex' }, s.extra || ''));
   }
-  const fixMe = (txt, viewer, inSeat, names) => (viewer === inSeat || inSeat < 0 || !names[inSeat] ? txt : txt.split('내 차례').join(names[inSeat] + ' 차례'));
+  const fixMe = (txt, viewer, inSeat, names) => (inSeat < 0 || !names[inSeat] ? txt : viewer === inSeat ? txt.split(names[inSeat] + ' 차례입니다. 주사위').join('내 차례입니다. 주사위').split(names[inSeat] + ' 차례입니다').join('내 차례입니다') : txt.split('내 차례').join(names[inSeat] + ' 차례'));
+
+  /* ----- compression for big screen copies ----- */
+  const CAN_Z = typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
+  async function zip(str) { const s = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip')); return new Uint8Array(await new Response(s).arrayBuffer()); }
+  async function unzip(bytes) { const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')); return await new Response(s).text(); }
+  async function sendPacked(H, id, msg) {
+    if (CAN_Z && msg.html && msg.html.length > 4000) { const z = await zip(JSON.stringify(msg)); H.send(id, { t: 'z', z }); }
+    else H.send(id, msg);
+  }
+  async function unpack(m) {
+    if (m.t !== 'z') return m;
+    try { const b = m.z instanceof Uint8Array ? m.z : new Uint8Array(m.z); return JSON.parse(await unzip(b)); } catch (e) { return null; }
+  }
+  function showPrivateAsk(m, answer) {
+    document.querySelectorAll('.pask-bg').forEach(x => x.remove());
+    const bg = h('div', { class: 'modal-bg pask-bg' }, h('div', { class: 'dialog', role: 'dialog' }, h('h3', null, m.title), h('p', { class: 'on-sub' }, m.text),
+      h('div', { class: 'pask-list' }, m.options.map((o, i) => h('button', { class: 'btn mb-tr', type: 'button', onclick: () => { bg.remove(); answer(i); } }, h('span', null, h('b', null, o.l), o.d ? h('small', null, o.d) : null))))));
+    document.body.append(bg);
+  }
 
   /* ===== screens ===== */
   let net = null, role = null;
@@ -4729,6 +4750,9 @@ function makeDeck(decks, jokers) {
         if (!room.members.some(x => x.id === id)) room.members.push({ id, name: nm });
         room.count = Math.max(room.count, room.members.length);
         drawRoom(); bcast(roomInfo());
+      } else if (m.t === 'pans') {
+        const pa = pendingAsks[m.id];
+        if (pa && room.seats && room.seats[pa.seat] && room.seats[pa.seat].id === id) { delete pendingAsks[m.id]; pa.res(m.v); }
       } else if (m.t === 'mclick' && room.mirror) {
         const seat = room.seats.findIndex(s => s.id === id);
         if (seat >= 0) room.mirror.click(seat, m);
@@ -4745,6 +4769,7 @@ function makeDeck(decks, jokers) {
       room.members.splice(mi, 1);
       if (room.mirror) {
         const seat = room.seats.findIndex(s => s.id === id);
+        Object.keys(pendingAsks).forEach(k => { if (pendingAsks[k].seat === seat) { const pa = pendingAsks[k]; delete pendingAsks[k]; pa.res(0); } });
         if (seat >= 0) { room.seats[seat].id = null; room.mirror.log(`${nm}: 연결이 끊겼습니다. 이 자리는 더 이상 진행할 수 없어 방장이 대신 눌러야 합니다.`); room.mirror.orphan(seat); }
       } else if (room.engine) {
         const seat = room.seats.findIndex(s => s.id === id);
@@ -4830,6 +4855,18 @@ function makeDeck(decks, jokers) {
       tableEl.append(res);
       if (window.__bgOnResult) window.__bgOnResult('host', rr.sub);
     }
+    const pendingAsks = {}; let askSeq = 0;
+    function privateAsk(seat, title, text, options) {
+      return new Promise(res => {
+        const s = room.seats[seat];
+        const pick = i => res(options[clamp(i | 0, 0, options.length - 1)].v);
+        if (!s || !s.id) { pick(rand(options.length)); return; }
+        if (s.id === 'host') { showPrivateAsk({ title, text, options }, pick); return; }
+        const id = ++askSeq;
+        pendingAsks[id] = { seat, res: pick };
+        H.send(s.id, { t: 'pask', id, title, text, options: options.map(o => ({ l: o.l, d: o.d })) });
+      });
+    }
     function startMirror() {
       const g = GAMES.find(x => x.id === room.game);
       room.engine = null;
@@ -4849,13 +4886,13 @@ function makeDeck(decks, jokers) {
       const players = seats.map((s, i) => ({ idx: i, human: s.human, level: room.level, color: s.color, name: s.name }));
       const names = players.map(p => p.name);
       const logLines = [];
-      let cur = -1, lastCur = -1, extras = [], statusRaw = '', ended = false, timer = null, fixing = false;
+      let midSeq = 0, lastSent = {}, sendQ = {}, extrasFor = null, cur = -1, lastCur = -1, extras = [], statusRaw = '', ended = false, timer = null, fixing = false;
       const M = { log: m => ctx.log(m) };
       const inSeat = () => (ctx.inputSeat != null && ctx.inputSeat >= 0 ? ctx.inputSeat : cur);
       const mAlive = () => alive() && room.mirror === M && room.gen === gen;
-      function seatData() { return players.map((p, i) => ({ name: p.name, color: p.color, ai: !p.human, extra: extras[i] != null ? String(extras[i]) : '', turn: !ended && cur === i })); }
+      function seatData(viewer) { const ex = extrasFor ? extrasFor(viewer) : extras; return players.map((p, i) => ({ name: p.name, color: p.color, ai: !p.human, extra: ex[i] != null ? String(ex[i]) : '', turn: !ended && cur === i })); }
       function drawSide() {
-        seatsEl.replaceChildren(...seatData().map((s, i) => seatRow(s, i, hostSeat)));
+        seatsEl.replaceChildren(...seatData(hostSeat).map((s, i) => seatRow(s, i, hostSeat)));
         statusEl.textContent = fixMe(statusRaw, hostSeat, inSeat(), names);
       }
       function hostFix() {
@@ -4871,13 +4908,19 @@ function makeDeck(decks, jokers) {
         timer = null;
         if (!mAlive()) return;
         hostFix();
-        let k = 0; tableEl.querySelectorAll('*').forEach(el => { const v = String(k++); if (el.getAttribute('data-m') !== v) el.setAttribute('data-m', v); });
+        tableEl.querySelectorAll('*:not([data-m])').forEach(el => { el.setAttribute('data-m', String(++midSeq)); });
         mo.takeRecords();
         drawSide();
-        const html = tableEl.innerHTML, who = inSeat(), sd = seatData();
-        seats.forEach((s, i) => { if (s.id && s.id !== 'host') H.send(s.id, { t: 'mirror', html: fixMe(html, i, who, names), seats: sd, me: i, status: fixMe(statusRaw, i, who, names), log: logLines.slice(-80), myInput: who === i, ended }); });
+        const html = tableEl.innerHTML, who = inSeat();
+        seats.forEach((s, i) => {
+          if (!s.id || s.id === 'host') return;
+          const hv = fixMe(html, i, who, names);
+          const msg = { t: 'mirror', seats: seatData(i), me: i, status: fixMe(statusRaw, i, who, names), log: logLines.slice(-60), myInput: who === i, ended };
+          if (lastSent[s.id] !== hv) { lastSent[s.id] = hv; msg.html = hv; }
+          sendQ[s.id] = (sendQ[s.id] || Promise.resolve()).then(() => sendPacked(H, s.id, msg)).catch(() => { });
+        });
       }
-      const schedule = () => { if (!timer) timer = setTimeout(flush, FAST ? 0 : 70); };
+      const schedule = () => { if (!timer) timer = setTimeout(flush, FAST ? 0 : 90); };
       const mo = new MutationObserver(() => { if (!fixing) schedule(); });
       mo.observe(tableEl, { subtree: true, childList: true, attributes: true, characterData: true });
       // block host clicks when it is not the host's input
@@ -4899,7 +4942,8 @@ function makeDeck(decks, jokers) {
         wait: ms => sleepMs(ms),
         log(msg) { logLines.push(msg); if (logLines.length > 250) logLines.shift(); logEl.append(h('div', null, msg)); while (logEl.children.length > 250) logEl.firstChild.remove(); logEl.scrollTop = logEl.scrollHeight; schedule(); },
         status(msg) { statusRaw = msg; schedule(); },
-        setSeats(c, ex) { cur = c; if (c >= 0) lastCur = c; extras = ex || []; schedule(); },
+        setSeats(c, ex, exFor) { cur = c; if (c >= 0) lastCur = c; extras = ex || []; extrasFor = exFor || null; schedule(); },
+        privateAsk: (seat, title, text, options) => privateAsk(seat, title, text, options),
         result(title, sub) {
           if (!mAlive()) return;
           ended = true;
@@ -4971,14 +5015,19 @@ function makeDeck(decks, jokers) {
           Array.from({ length: Math.max(0, info.count - info.members.length) }, (_, i) => h('div', { class: 'on-p ai' }, h('span', { class: 'dot', style: { '--d': SEAT_COLORS[info.members.length + i] } }), 'AI'))),
         h('p', { class: 'on-sub' }, `게임: ${info.gname || info.game}. 방장이 시작하기를 기다리는 중입니다.`))));
     }
-    G.onMsg = m => {
+    let inQ = Promise.resolve();
+    G.onMsg = m0 => { inQ = inQ.then(() => handle(m0)).catch(e => console.error(e)); };
+    const handle = async m0 => {
+      if (!alive() || !m0) return;
+      const m = await unpack(m0);
       if (!alive() || !m) return;
+      if (m.t === 'pask') { showPrivateAsk(m, v => G.send({ t: 'pans', id: m.id, v })); return; }
       if (m.t === 'deny') { clearTimeout(timer); cleanup(); showOnline(m.why); return; }
       if (m.t === 'room') { joined = true; clearTimeout(timer); info = m; if (!tableEl || !document.body.contains(tableEl) || curGame === null) waitRoom(); }
       else if (m.t === 'start') { joined = true; showTable(m.game, false); if (m.mode === 'mirror') setupGuestMirror(); }
       else if (m.t === 'mirror') {
         if (!tableEl || !document.body.contains(tableEl)) { showTable(info ? info.game : '', false); setupGuestMirror(); }
-        tableEl.innerHTML = m.html;
+        if (m.html != null) tableEl.innerHTML = m.html;
         tableEl.classList.toggle('my-input', !!m.myInput);
         const row = tableEl.querySelector('.overlay .row');
         if (row) row.replaceWith(h('p', { class: 'on-wait' }, '방장이 다음 판을 고를 때까지 기다려 주세요.'));
