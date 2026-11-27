@@ -553,6 +553,24 @@ h1,h2,h3,p{margin:0}
 .on-root{width:100%;height:100%;position:relative}
 .pask-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 .pask-list .mb-tr{display:block;width:100%;text-align:left;padding:10px 12px;white-space:normal}
+/* chat */
+.ch-wrap{position:fixed;right:14px;bottom:14px;z-index:60;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none}
+.ch-wrap>*{pointer-events:auto}
+.ch-fab{background:var(--brick);color:#fff6e4;border:0;border-radius:99px;padding:10px 16px;font:inherit;font-weight:700;box-shadow:0 6px 16px rgba(0,0,0,.45);display:flex;gap:6px;align-items:center;cursor:pointer}
+.ch-badge:empty{display:none}
+.ch-badge{background:#fff6e4;color:var(--brick);border-radius:99px;min-width:20px;padding:0 6px;font-size:12px;text-align:center}
+.ch-panel{display:none;width:min(320px,calc(100vw - 28px));height:min(380px,60vh);background:#2a1d13;border:1px solid var(--brass);border-radius:14px;box-shadow:0 18px 36px rgba(0,0,0,.55);flex-direction:column;overflow:hidden}
+.ch-wrap.open .ch-panel{display:flex}
+.ch-wrap.open .ch-toast{display:none}
+.ch-head{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);font-weight:700}
+.ch-x{background:none;border:0;color:var(--muted);font:inherit;cursor:pointer}
+.ch-list{flex:1;overflow:auto;padding:8px 12px;display:flex;flex-direction:column;gap:5px;font-size:14px;word-break:break-all}
+.ch-row{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line)}
+.ch-in{flex:1;min-width:0;background:#1a120c;border:1px solid var(--line);border-radius:9px;color:var(--cream);padding:8px 10px;font:inherit;font-size:16px}
+.ch-send{padding:8px 12px}
+.ch-toast{max-width:min(300px,calc(100vw - 28px));background:#2a1d13;border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-size:14px;box-shadow:0 8px 18px rgba(0,0,0,.45);opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s;pointer-events:none;word-break:break-all}
+.ch-toast.on{opacity:1;transform:none}
+.pask-bg{top:58px}
 
 </style>
 </head>
@@ -614,7 +632,8 @@ function setTop(extra) {
   topEl.replaceChildren(
     h('button', { class: 'brand', onclick: () => showLobby() }, h('span', { html: LOGO }), '보드게임 테이블'),
     h('span', { class: 'grow' }),
-    ...(extra || []));
+    ...(extra || []),
+    h('button', { class: 'tbtn', type: 'button', onclick: e => { const on = window.SFX.toggle(); e.currentTarget.textContent = on ? '소리 켬' : '소리 끔'; } }, window.SFX && window.SFX.on ? '소리 켬' : '소리 끔'));
 }
 const tbtn = (label, fn) => h('button', { class: 'tbtn', type: 'button', onclick: fn }, label);
 
@@ -737,6 +756,7 @@ function startGame(g, cfg) {
     alive: () => session === sid,
     wait: ms => sleepMs(ms),
     log(msg) {
+      const snd = window.SFX && window.SFX.fromLog(g.id, msg); if (snd) window.SFX.play(snd);
       logEl.append(h('div', null, msg));
       while (logEl.children.length > 250) logEl.firstChild.remove();
       logEl.scrollTop = logEl.scrollHeight;
@@ -757,6 +777,7 @@ function startGame(g, cfg) {
         h('button', { class: 'btn', type: 'button', onclick: () => showSetup(g) }, '설정 바꾸기'),
         h('button', { class: 'btn', type: 'button', onclick: showLobby }, '로비로'));
       table.append(h('div', { class: 'overlay' }, h('div', { class: 'result' }, h('h3', null, title), sub ? h('p', null, sub) : null, row)));
+      if (window.SFX) window.SFX.play(/승리|탈출 성공|공동/.test(title) ? 'win' : /패배|도둑|바닥|탈락/.test(title) ? 'lose' : 'good');
       if (window.__bgOnResult) window.__bgOnResult(title, sub);
     }
   };
@@ -795,6 +816,89 @@ function makeDeck(decks, jokers) {
   }
   return shuffle(d);
 }
+
+/* ---------- 효과음 (파일 없이 브라우저에서 직접 합성) ---------- */
+const SFX = (function () {
+  let ac = null, master = null;
+  let on = (() => { try { return localStorage.getItem('bgtable.sfx') !== 'off'; } catch (e) { return true; } })();
+  const last = {};
+  function ctx() {
+    if (ac) return ac;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    ac = new AC();
+    master = ac.createGain(); master.gain.value = 0.32; master.connect(ac.destination);
+    return ac;
+  }
+  const unlock = () => { const a = ctx(); if (a && a.state === 'suspended') a.resume(); };
+  document.addEventListener('pointerdown', unlock, true);
+  document.addEventListener('keydown', unlock, true);
+
+  function tone(freq, t0, dur, type, vol, slideTo) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type || 'sine'; o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol || 0.5, t0 + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(master); o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  let noiseBuf = null;
+  function noise(t0, dur, vol, freq, q) {
+    if (!noiseBuf) { noiseBuf = ac.createBuffer(1, ac.sampleRate * 0.5, ac.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+    const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    s.buffer = noiseBuf; f.type = 'bandpass'; f.frequency.value = freq || 2000; f.Q.value = q || 1;
+    g.gain.setValueAtTime(vol || 0.5, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    s.connect(f); f.connect(g); g.connect(master); s.start(t0); s.stop(t0 + dur + 0.02);
+  }
+  const SOUNDS = {
+    click: t => tone(1250, t, 0.035, 'sine', 0.18),
+    tick: t => tone(720, t, 0.03, 'triangle', 0.22),
+    dice: t => { for (let i = 0; i < 6; i++) noise(t + i * 0.045 + Math.random() * 0.02, 0.05, 0.55, 2600 + Math.random() * 1500, 3); tone(180, t + 0.3, 0.07, 'sine', 0.3); },
+    sticks: t => { for (let i = 0; i < 4; i++) { tone(900 + Math.random() * 500, t + i * 0.07, 0.05, 'square', 0.12); noise(t + i * 0.07, 0.04, 0.4, 3000, 4); } },
+    card: t => noise(t, 0.09, 0.5, 3200, 0.8),
+    chip: t => { tone(2400, t, 0.04, 'triangle', 0.25); tone(3100, t + 0.05, 0.04, 'triangle', 0.2); },
+    stone: t => { tone(160, t, 0.09, 'sine', 0.55, 90); noise(t, 0.05, 0.4, 1200, 2); },
+    coin: t => { tone(988, t, 0.08, 'square', 0.13); tone(1319, t + 0.07, 0.18, 'square', 0.13); },
+    pay: t => { tone(660, t, 0.1, 'triangle', 0.3); tone(440, t + 0.09, 0.16, 'triangle', 0.3); },
+    magic: t => [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, t + i * 0.055, 0.22, 'sine', 0.22)),
+    chime: t => { tone(880, t, 0.5, 'sine', 0.25); tone(1320, t, 0.4, 'sine', 0.12); },
+    good: t => { tone(784, t, 0.1, 'triangle', 0.28); tone(1047, t + 0.08, 0.2, 'triangle', 0.28); },
+    bad: t => { tone(330, t, 0.14, 'sawtooth', 0.12, 260); tone(247, t + 0.12, 0.22, 'sawtooth', 0.12, 200); },
+    win: t => [523, 659, 784, 1047].forEach((f, i) => tone(f, t + i * 0.11, i === 3 ? 0.5 : 0.16, 'triangle', 0.3)),
+    lose: t => [392, 349, 311, 262].forEach((f, i) => tone(f, t + i * 0.14, i === 3 ? 0.5 : 0.18, 'triangle', 0.26))
+  };
+  function play(name) {
+    if (!on || !SOUNDS[name]) return;
+    const a = ctx(); if (!a || a.state !== 'running') return;
+    const now = a.currentTime;
+    if (last[name] && now - last[name] < 0.06) return;
+    last[name] = now;
+    try { SOUNDS[name](now + 0.005); } catch (e) { /* ignore */ }
+  }
+  function fromLog(game, msg) {
+    const m = String(msg);
+    if (/^---|게임 시작|종료 -/.test(m)) return null;
+    if (/\[.+\]/.test(m)) return 'magic';
+    if (/파산|탈락|도둑|오답|무인도에 갇힘|세금|버스트/.test(m)) return 'bad';
+    if (/정답|원카드!|우노!|블랙잭|탈출|완주|독점|잡음|올림픽 개최/.test(m)) return 'good';
+    if (/황금열쇠|보너스 게임|천사 카드/.test(m)) return 'chime';
+    if (/주사위/.test(m)) return 'dice';
+    if (/통행료|인수 \(|소매치기/.test(m)) return 'pay';
+    if (/구매|건설|월급|획득|점 \(/.test(m)) return 'coin';
+    if (/칩|베팅|레이즈|콜|올인|체크|폴드|판돈|더블/.test(m)) return 'chip';
+    if (game === 'gomoku' || game === 'othello' || game === 'connect4') return 'stone';
+    if (game === 'yut') return /: (도|개|걸|윷|모|빽도)$/.test(m) ? 'sticks' : 'tick';
+    return 'card';
+  }
+  return {
+    play, fromLog,
+    get on() { return on; },
+    toggle() { on = !on; try { localStorage.setItem('bgtable.sfx', on ? 'on' : 'off'); } catch (e) { /* ignore */ } if (on) { unlock(); play('good'); } return on; }
+  };
+})();
+window.SFX = SFX;
+const sfx = n => { SFX.play(n); if (window.__sfxHook) window.__sfxHook(n); };
+// soft click on every button press
+document.addEventListener('click', e => { if (e.isTrusted && e.target.closest && e.target.closest('button')) SFX.play('click'); }, true);
 
 /* ---------- 오목 ---------- */
 (function () {
@@ -2168,6 +2272,7 @@ function makeDeck(decks, jokers) {
       const render = () => { renderDice(); renderBoard(); };
 
       async function doRoll() {
+        sfx('dice');
         pickRes = null; rollRes = null;
         const idx = dice.map((_, i) => i).filter(i => !held[i]);
         idx.forEach(i => { rolling[i] = true; });
@@ -2995,7 +3100,7 @@ function makeDeck(decks, jokers) {
         laps: P.map(() => 0), angel: P.map(() => 0), escape: P.map(() => 0), boost: P.map(() => 0), again: P.map(() => false),
         owner: Array(32).fill(-1), level: Array(32).fill(0), olympic: -1, olyMult: 1, tr: P.map(() => []), grow: P.map(() => ({ craft: 0 })), ticketNext: P.map(() => false)
       };
-      let round = 0, cur = 0, over = false, winner = null, monoSeen = new Set(), dice = [0, 0], rolling = false, pickSet = null, pickRes = null;
+      let trShown = !TR, round = 0, cur = 0, over = false, winner = null, monoSeen = new Set(), dice = [0, 0], rolling = false, pickSet = null, pickRes = null;
 
       const sqEls = BOARD.map((sq, i) => {
         const [r, c] = posRC(i);
@@ -3060,7 +3165,7 @@ function makeDeck(decks, jokers) {
         for (let i = 0; i < 32; i++) updateSquare(i);
         diceEl.replaceChildren(...dice.map(v => dieEl(v, rolling ? 'rolling' : '')));
         infoEl.textContent = over ? '' : `${round}${maxRounds ? '/' + maxRounds : ''}라운드 - ${cur >= 0 ? P[cur].name : "보물 선택 중"}` + (S.olympic >= 0 ? ` / 올림픽 ${BOARD[S.olympic].n} x${S.olyMult}` : '');
-        const seatEx = viewer => P.map((_, i) => (S.alive[i] ? S.cash[i] + '만 · ' + (S.laps[i] + 1) + '바퀴' + (S.angel[i] ? ' 천사' + S.angel[i] : '') + (S.escape[i] ? ' 탈출권' + S.escape[i] : '') + (TR && S.tr[i].length ? (i === viewer || over ? ' · ' + S.tr[i].map(id => TS[id].s + (S.grow[i][id] != null ? `(${Math.round(Math.min(1, 1 / 3 + S.grow[i][id]) * 100)}%)` : '')).join('·') : ' · 보물 ' + S.tr[i].length + '개') : '') : '파산'));
+        const seatEx = viewer => P.map((_, i) => (S.alive[i] ? S.cash[i] + '만 · ' + (S.laps[i] + 1) + '바퀴' + (S.angel[i] ? ' 천사' + S.angel[i] : '') + (S.escape[i] ? ' 탈출권' + S.escape[i] : '') + (TR && S.tr[i].length ? (i === viewer || over || trShown ? ' · ' + S.tr[i].map(id => TS[id].s + (S.grow[i][id] != null ? `(${Math.round(Math.min(1, 1 / 3 + S.grow[i][id]) * 100)}%)` : '')).join('·') : ' · 보물 ' + S.tr[i].length + '개') : '') : '파산'));
         ctx.setSeats(over ? -1 : cur, seatEx(P.findIndex(p => p.human)), seatEx);
       }
       const say = t => { msgEl.textContent = t; };
@@ -3172,8 +3277,8 @@ function makeDeck(decks, jokers) {
         for (let k = 0; k < steps; k++) {
           S.pos[pi] = (S.pos[pi] + 1) % 32;
           if (S.pos[pi] === 0) { S.cash[pi] += SALARY; S.laps[pi]++; ctx.log(`${P[pi].name}: 출발 통과, 월급 +${SALARY}만 (${S.laps[pi] + 1}바퀴째)`); }
-          render();
-          await W(90);
+          render(); sfx('tick');
+          await W(ctx.online ? 70 : 90);
           if (!ctx.alive()) return;
         }
       }
@@ -3521,7 +3626,7 @@ function makeDeck(decks, jokers) {
       }
       async function chooseTreasures() {
         const ask1 = (pi, r, offer) => {
-          const title = `보물 선택 (${r + 1}/2)`, text = '보물 하나를 고르세요. 선택지는 사람마다 다르고, 고른 보물은 다른 사람에게 보이지 않습니다.' + (S.tr[pi].length ? ` 이미 고른 보물: ${TS[S.tr[pi][0]].n}` : '');
+          const title = `보물 선택 (${r + 1}/2)`, text = '보물 하나를 고르세요. 선택지는 사람마다 다르고, 다 고를 때까지 다른 사람에게 보이지 않습니다.' + (S.tr[pi].length ? ` 이미 고른 보물: ${TS[S.tr[pi][0]].n}` : '');
           if (ctx.privateAsk) return ctx.privateAsk(pi, title, text, offer.map(x => ({ v: x.id, l: x.n, d: x.d })));
           return askPop(title, text, offer.map(x => ({ v: x.id, cls: 'btn mb-tr', l: h('span', null, h('b', null, x.n), h('small', null, x.d)) })));
         };
@@ -3535,7 +3640,9 @@ function makeDeck(decks, jokers) {
           }
         }));
         if (!ctx.alive()) return;
-        ctx.log('모두 보물을 골랐습니다. 다른 사람의 보물은 발동할 때 공개됩니다.');
+        trShown = true;
+        ctx.log('모두 보물을 골랐습니다.');
+        P.forEach((p, pi) => ctx.log(`${p.name}: 보물 - ${S.tr[pi].map(id => TS[id].n).join(', ')}`));
         say(''); cur = 0; render();
       }
 
@@ -3641,7 +3748,7 @@ function makeDeck(decks, jokers) {
         else { say(`${P[pi].name} 차례`); await W(380); }
         if (!ctx.alive()) return [1, 1];
         rolling = true;
-        if (ctx.online) { render(); await W(350); } else for (let k = 0; k < 3; k++) { dice = [1 + rand(6), 1 + rand(6)]; render(); await W(90); }
+        if (ctx.online) { render(); await W(450); } else for (let k = 0; k < 3; k++) { dice = [1 + rand(6), 1 + rand(6)]; render(); await W(90); }
         rolling = false;
         dice = [1 + rand(6), 1 + rand(6)];
         render();
@@ -4671,6 +4778,36 @@ function makeDeck(decks, jokers) {
   }
   const fixMe = (txt, viewer, inSeat, names) => (inSeat < 0 || !names[inSeat] ? txt : viewer === inSeat ? txt.split(names[inSeat] + ' 차례입니다. 주사위').join('내 차례입니다. 주사위').split(names[inSeat] + ' 차례입니다').join('내 차례입니다') : txt.split('내 차례').join(names[inSeat] + ' 차례'));
 
+  /* ----- chat ----- */
+  let chatWrap = null, chatList = null, chatBadge = null, chatOpen = false, chatUnread = 0, chatSendFn = null;
+  function removeChat() { if (chatWrap) chatWrap.remove(); chatWrap = null; chatOpen = false; chatUnread = 0; }
+  function makeChat(sendFn) {
+    removeChat();
+    chatSendFn = sendFn;
+    chatList = h('div', { class: 'ch-list' });
+    const input = h('input', { class: 'ch-in', type: 'text', maxlength: 100, placeholder: '메시지 입력', enterkeyhint: 'send' });
+    const send = () => { const v = input.value.trim(); if (!v) return; input.value = ''; chatSendFn(v); };
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(); } });
+    const panel = h('div', { class: 'ch-panel' }, h('div', { class: 'ch-head' }, '채팅', h('button', { class: 'ch-x', type: 'button', 'aria-label': '채팅 닫기', onclick: () => toggle(false) }, '닫기')), chatList,
+      h('div', { class: 'ch-row' }, input, h('button', { class: 'btn main ch-send', type: 'button', onclick: send }, '보내기')));
+    chatBadge = h('span', { class: 'ch-badge' });
+    const toastEl = h('div', { class: 'ch-toast' });
+    const fab = h('button', { class: 'ch-fab', type: 'button', onclick: () => toggle(!chatOpen) }, '채팅', chatBadge);
+    chatWrap = h('div', { class: 'ch-wrap' }, panel, toastEl, fab);
+    function toggle(v) { chatOpen = v; chatWrap.classList.toggle('open', v); if (v) { chatUnread = 0; chatBadge.textContent = ''; chatList.scrollTop = chatList.scrollHeight; setTimeout(() => input.focus(), 0); } }
+    chatWrap.toast = (txt) => { toastEl.textContent = txt; toastEl.classList.add('on'); clearTimeout(toastEl._t); toastEl._t = setTimeout(() => toastEl.classList.remove('on'), 3500); };
+    document.body.append(chatWrap);
+  }
+  function addChat(name, color, text) {
+    if (!chatWrap) return;
+    chatList.append(h('div', { class: 'ch-msg' }, h('b', { style: { color: color || 'var(--brass)' } }, name), ' ', text));
+    while (chatList.children.length > 80) chatList.firstChild.remove();
+    chatList.scrollTop = chatList.scrollHeight;
+    if (!chatOpen) { chatUnread++; chatBadge.textContent = String(chatUnread); chatWrap.toast(`${name}: ${text}`); }
+    SFX.play('tick');
+  }
+  let hostStopFn = null;
+
   /* ----- update the copied screen in place so animations do not restart ----- */
   function morphNode(a, b) {
     if (a.nodeType !== b.nodeType || (a.nodeType === 1 && a.tagName !== b.tagName)) { a.replaceWith(b.cloneNode(true)); return; }
@@ -4704,12 +4841,13 @@ function makeDeck(decks, jokers) {
     document.querySelectorAll('.pask-bg').forEach(x => x.remove());
     const bg = h('div', { class: 'modal-bg pask-bg' }, h('div', { class: 'dialog', role: 'dialog' }, h('h3', null, m.title), h('p', { class: 'on-sub' }, m.text),
       h('div', { class: 'pask-list' }, m.options.map((o, i) => h('button', { class: 'btn mb-tr', type: 'button', onclick: () => { bg.remove(); answer(i); } }, h('span', null, h('b', null, o.l), o.d ? h('small', null, o.d) : null))))));
+    const tb = document.getElementById('top'); if (tb) bg.style.top = Math.round(tb.getBoundingClientRect().bottom) + 'px';
     document.body.append(bg);
   }
 
   /* ===== screens ===== */
   let net = null, role = null;
-  function cleanup() { if (net) { try { net.close(); } catch (e) { /* ignore */ } } net = null; role = null; }
+  function cleanup() { window.__sfxHook = null; removeChat(); document.querySelectorAll('.pask-bg').forEach(x => x.remove()); if (net) { try { net.close(); } catch (e) { /* ignore */ } } net = null; role = null; }
   const prefName = () => (loadPrefs().onlineName || '').slice(0, 10);
   const saveName = nm => { const p = loadPrefs(); p.onlineName = nm; savePrefs(p); };
   const leaveBtn = () => tbtn('나가기', () => { cleanup(); showLobby(); });
@@ -4758,8 +4896,21 @@ function makeDeck(decks, jokers) {
       if (!alive()) return;
       if (room.engine || room.members.length >= 4) { H.send(id, { t: 'deny', why: room.engine ? '이미 게임이 진행 중입니다.' : '방이 꽉 찼습니다.' }); return; }
     };
+    const memberColor = id => { const s = room.seats && room.seats.find(x => x.id === id); if (s) return s.color; const i = room.members.findIndex(x => x.id === id); return SEAT_COLORS[Math.max(0, i)]; };
+    const sayChat = (id, text) => { const mem = room.members.find(x => x.id === id); if (!mem) return; const msg = { t: 'chat', name: mem.name, color: memberColor(id), text: String(text).slice(0, 100) }; addChat(msg.name, msg.color, msg.text); bcast(msg); };
+    makeChat(text => sayChat('host', text));
+    function stopGame() {
+      if (room.mirror && room.mirror.stop) room.mirror.stop();
+      room.mirror = null; room.engine = null;
+      clearTimeout(aiTimer); aiTimer = null;
+      window.__sfxHook = null;
+      document.querySelectorAll('.pask-bg').forEach(x => x.remove());
+      bcast({ t: 'toroom' }); bcast(roomInfo()); drawRoom();
+    }
+    hostStopFn = stopGame;
     H.onMsg = (id, m) => {
       if (!alive() || !m) return;
+      if (m.t === 'chat') { sayChat(id, m.text); return; }
       if (m.t === 'hello') {
         if (room.engine) { H.send(id, { t: 'deny', why: '이미 게임이 진행 중입니다.' }); return; }
         if (room.members.length >= 4) { H.send(id, { t: 'deny', why: '방이 꽉 찼습니다.' }); return; }
@@ -4819,6 +4970,7 @@ function makeDeck(decks, jokers) {
     }
 
     function startMatch() {
+      clearTimeout(aiTimer); aiTimer = null;
       if (!ONLINE[room.game]) { startMirror(); return; }
       room.mirror = null;
       const G = ONLINE[room.game];
@@ -4842,7 +4994,11 @@ function makeDeck(decks, jokers) {
       if (!alive() || !room.engine) return;
       const E = room.engine;
       // send views
-      const withRes = i => { const v = E.view(i); v.res = isOver(E) ? resultOf(E, room.seats, i) : null; return v; };
+      const newLines = E.log.length && E.log[E.log.length - 1] !== room.lastLog ? E.log.slice(Math.max(0, E.log.lastIndexOf(room.lastLog) + 1)) : [];
+      room.lastLog = E.log[E.log.length - 1];
+      const sounds = newLines.map(l => SFX.fromLog(room.game, l)).filter(Boolean).slice(-3);
+      sounds.forEach(s => SFX.play(s));
+      const withRes = i => { const v = E.view(i); v.res = isOver(E) ? resultOf(E, room.seats, i) : null; v.sfx = sounds; return v; };
       room.seats.forEach((s, i) => { if (s.id && s.id !== 'host') H.send(s.id, { t: 'view', v: withRes(i) }); });
       const hostSeat = room.seats.findIndex(s => s.id === 'host');
       tableRender(E.view(hostSeat));
@@ -4869,8 +5025,9 @@ function makeDeck(decks, jokers) {
         h('p', null, rr.sub),
         h('div', { class: 'row' },
           h('button', { class: 'btn main', type: 'button', onclick: () => { room.engine = null; startMatch(); } }, '한 판 더'),
-          h('button', { class: 'btn', type: 'button', onclick: () => { room.engine = null; bcast({ t: 'toroom' }); bcast(roomInfo()); drawRoom(); } }, '방으로'))));
+          h('button', { class: 'btn', type: 'button', onclick: () => stopGame() }, '방으로'))));
       tableEl.append(res);
+      SFX.play(/승리|탈출 성공/.test(rr.title) ? 'win' : 'lose');
       if (window.__bgOnResult) window.__bgOnResult('host', rr.sub);
     }
     const pendingAsks = {}; let askSeq = 0;
@@ -4904,7 +5061,7 @@ function makeDeck(decks, jokers) {
       const players = seats.map((s, i) => ({ idx: i, human: s.human, level: room.level, color: s.color, name: s.name }));
       const names = players.map(p => p.name);
       const logLines = [];
-      let midSeq = 0, lastSent = {}, busy = {}, dirty = false, extrasFor = null, cur = -1, lastCur = -1, extras = [], statusRaw = '', ended = false, timer = null, fixing = false;
+      let midSeq = 0, lastSent = {}, busy = {}, dirty = false, pendSfx = [], extrasFor = null, cur = -1, lastCur = -1, extras = [], statusRaw = '', ended = false, timer = null, fixing = false;
       const M = { log: m => ctx.log(m) };
       const inSeat = () => (ctx.inputSeat != null && ctx.inputSeat >= 0 ? ctx.inputSeat : cur);
       const mAlive = () => alive() && room.mirror === M && room.gen === gen;
@@ -4930,18 +5087,19 @@ function makeDeck(decks, jokers) {
         mo.takeRecords();
         drawSide();
         const html = tableEl.innerHTML, who = inSeat();
+        const sfxNow = pendSfx.splice(0).slice(-4);
         seats.forEach((s, i) => {
           if (!s.id || s.id === 'host') return;
           const hv = fixMe(html, i, who, names);
-          const msg = { t: 'mirror', seats: seatData(i), me: i, status: fixMe(statusRaw, i, who, names), log: logLines.slice(-60), myInput: who === i, ended };
+          const msg = { t: 'mirror', sfx: sfxNow, seats: seatData(i), me: i, status: fixMe(statusRaw, i, who, names), log: logLines.slice(-30), myInput: who === i, ended };
           if (lastSent[s.id] !== hv) { lastSent[s.id] = hv; msg.html = hv; }
-          if (busy[s.id] || (H.buffered && H.buffered(s.id) > 150000)) { dirty = true; if (msg.html != null) lastSent[s.id] = null; return; }
+          if (busy[s.id] || (H.buffered && H.buffered(s.id) > 12000)) { dirty = true; if (msg.html != null) lastSent[s.id] = null; return; }
           busy[s.id] = true;
           sendPacked(H, s.id, msg).catch(() => { }).then(() => { busy[s.id] = false; });
         });
         if (dirty) { dirty = false; setTimeout(schedule, 120); }
       }
-      const schedule = () => { if (!timer) timer = setTimeout(flush, FAST ? 0 : 90); };
+      const schedule = () => { if (!timer) timer = setTimeout(flush, FAST ? 0 : 110); };
       const mo = new MutationObserver(() => { if (!fixing) schedule(); });
       mo.observe(tableEl, { subtree: true, childList: true, attributes: true, characterData: true });
       // block host clicks when it is not the host's input
@@ -4955,25 +5113,28 @@ function makeDeck(decks, jokers) {
         const r = el.getBoundingClientRect();
         el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: r.left + (m.rx || 0.5) * r.width, clientY: r.top + (m.ry || 0.5) * r.height }));
       };
+      M.stop = () => { mo.disconnect(); };
       M.orphan = seat => { players[seat].human = true; seats[seat].id = 'host'; schedule(); };
       room.mirror = M;
+      window.__sfxHook = n => { if (mAlive()) { pendSfx.push(n); schedule(); } };
       const ctx = {
         game: g, cfg: { count: room.count, level: room.level, opts: room.opts }, players, opts: Object.assign({}, room.opts), level: room.level, table: tableEl, online: true, inputSeat: -1,
         alive: () => mAlive(),
         wait: ms => sleepMs(ms),
-        log(msg) { logLines.push(msg); if (logLines.length > 250) logLines.shift(); logEl.append(h('div', null, msg)); while (logEl.children.length > 250) logEl.firstChild.remove(); logEl.scrollTop = logEl.scrollHeight; schedule(); },
+        log(msg) { const snd = SFX.fromLog(g.id, msg); if (snd) sfx(snd); logLines.push(msg); if (logLines.length > 250) logLines.shift(); logEl.append(h('div', null, msg)); while (logEl.children.length > 250) logEl.firstChild.remove(); logEl.scrollTop = logEl.scrollHeight; schedule(); },
         status(msg) { statusRaw = msg; schedule(); },
         setSeats(c, ex, exFor) { cur = c; if (c >= 0) lastCur = c; extras = ex || []; extrasFor = exFor || null; schedule(); },
         privateAsk: (seat, title, text, options) => privateAsk(seat, title, text, options),
         result(title, sub) {
           if (!mAlive()) return;
           ended = true;
+          sfx('good');
           const tt = /승리|패배/.test(title) ? '게임 종료' : title;
           if (sub && lastCur >= 0 && !names.some(nm => sub.includes(nm))) sub = `${names[lastCur]}: ${sub}`;
           tableEl.append(h('div', { class: 'overlay' }, h('div', { class: 'result' }, h('h3', null, tt), sub ? h('p', null, sub) : null,
             h('div', { class: 'row' },
               h('button', { class: 'btn main', type: 'button', onclick: () => { mo.disconnect(); startMirror(); } }, '한 판 더'),
-              h('button', { class: 'btn', type: 'button', onclick: () => { mo.disconnect(); room.mirror = null; bcast({ t: 'toroom' }); bcast(roomInfo()); drawRoom(); } }, '방으로')))));
+              h('button', { class: 'btn', type: 'button', onclick: () => stopGame() }, '방으로')))));
           schedule();
           if (window.__bgOnResult) window.__bgOnResult('host', sub);
         }
@@ -4998,7 +5159,9 @@ function makeDeck(decks, jokers) {
     statusEl = h('div', { class: 'status', 'aria-live': 'polite' });
     logEl = h('div', { class: 'log' });
     screenEl.replaceChildren(h('div', { class: 'stage' }, tableEl, h('aside', { class: 'side' }, seatsEl, statusEl, h('div', { class: 'log-wrap' }, h('div', { class: 'log-h' }, '기록'), logEl))));
-    setTop([tbtn('규칙', () => { const g = GAMES.find(x => x.id === game); if (g) showRules(g); }), leaveBtn()]);
+    setTop([tbtn('규칙', () => { const g = GAMES.find(x => x.id === game); if (g) showRules(g); }),
+      isHost ? tbtn('게임 중지', () => openModal('게임 중지', h('p', null, '지금 게임을 멈추고 방으로 돌아갈까요? 친구들도 함께 방으로 돌아갑니다.'), [{ l: '계속하기' }, { l: '중지하고 방으로', main: true, fn: () => hostStopFn && hostStopFn() }])) : null,
+      leaveBtn()].filter(Boolean));
     sendAct = isHost ? (a => hostSend && hostSend(a)) : (a => net && net.send({ t: 'act', a }));
   }
   function tableRender(v) {
@@ -5036,6 +5199,7 @@ function makeDeck(decks, jokers) {
           Array.from({ length: Math.max(0, info.count - info.members.length) }, (_, i) => h('div', { class: 'on-p ai' }, h('span', { class: 'dot', style: { '--d': SEAT_COLORS[info.members.length + i] } }), 'AI'))),
         h('p', { class: 'on-sub' }, `게임: ${info.gname || info.game}. 방장이 시작하기를 기다리는 중입니다.`))));
     }
+    makeChat(text => G.send({ t: 'chat', text }));
     let inQ = Promise.resolve();
     G.onMsg = m0 => { inQ = inQ.then(() => handle(m0)).catch(e => console.error(e)); };
     const handle = async m0 => {
@@ -5043,12 +5207,14 @@ function makeDeck(decks, jokers) {
       const m = await unpack(m0);
       if (!alive() || !m) return;
       if (m.t === 'pask') { showPrivateAsk(m, v => G.send({ t: 'pans', id: m.id, v })); return; }
+      if (m.t === 'chat') { addChat(m.name, m.color, m.text); return; }
       if (m.t === 'deny') { clearTimeout(timer); cleanup(); showOnline(m.why); return; }
       if (m.t === 'room') { joined = true; clearTimeout(timer); info = m; if (!tableEl || !document.body.contains(tableEl) || curGame === null) waitRoom(); }
       else if (m.t === 'start') { joined = true; showTable(m.game, false); if (m.mode === 'mirror') setupGuestMirror(); }
       else if (m.t === 'mirror') {
         if (!tableEl || !document.body.contains(tableEl)) { showTable(info ? info.game : '', false); setupGuestMirror(); }
         if (m.html != null) morphInto(tableEl, m.html);
+        (m.sfx || []).forEach(s => SFX.play(s));
         tableEl.classList.toggle('my-input', !!m.myInput);
         const row = tableEl.querySelector('.overlay .row');
         if (row) row.replaceWith(h('p', { class: 'on-wait' }, '방장이 다음 판을 고를 때까지 기다려 주세요.'));
@@ -5059,13 +5225,15 @@ function makeDeck(decks, jokers) {
         if (m.ended && window.__bgOnResult && !G.__ended) { G.__ended = true; window.__bgOnResult('guest', ''); }
         if (!m.ended) G.__ended = false;
       }
-      else if (m.t === 'toroom') { curGame = null; tableEl = null; if (info) waitRoom(); }
+      else if (m.t === 'toroom') { curGame = null; tableEl = null; document.querySelectorAll('.pask-bg').forEach(x => x.remove()); if (info) waitRoom(); }
       else if (m.t === 'view') {
         if (!tableEl || !document.body.contains(tableEl)) showTable(m.v.game, false);
         tableRender(m.v);
+        (m.v.sfx || []).forEach(s => SFX.play(s));
         if (m.v.res && !tableEl.querySelector('.overlay')) {
           tableEl.append(h('div', { class: 'overlay' }, h('div', { class: 'result' }, h('h3', null, m.v.res.title),
             h('p', null, m.v.res.sub), h('p', null, '방장이 다음 판을 고를 때까지 기다려 주세요.'))));
+          SFX.play(/승리|탈출 성공/.test(m.v.res.title) ? 'win' : 'lose');
           if (window.__bgOnResult) window.__bgOnResult('guest', m.v.res.sub);
         }
       }
